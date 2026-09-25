@@ -1,0 +1,89 @@
+"""Persistencia de recordatorios en JSON."""
+
+from __future__ import annotations
+
+import json
+import uuid
+from pathlib import Path
+from typing import Any
+
+DATA_DIR = Path(__file__).resolve().parent / "data"
+REMINDERS_FILE = DATA_DIR / "reminders.json"
+
+
+def _ensure_data_dir() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def load_reminders() -> list[dict[str, Any]]:
+    _ensure_data_dir()
+    if not REMINDERS_FILE.exists():
+        return []
+    try:
+        with REMINDERS_FILE.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, list):
+            return data
+    except (json.JSONDecodeError, OSError):
+        pass
+    return []
+
+
+def save_reminders(reminders: list[dict[str, Any]]) -> None:
+    _ensure_data_dir()
+    with REMINDERS_FILE.open("w", encoding="utf-8") as fh:
+        json.dump(reminders, fh, ensure_ascii=False, indent=2)
+
+
+def create_reminder(
+    message: str,
+    kind: str,
+    *,
+    interval_minutes: int | None = None,
+    time_hhmm: str | None = None,
+    enabled: bool = True,
+    reminder_id: str | None = None,
+) -> dict[str, Any]:
+    reminder: dict[str, Any] = {
+        "id": reminder_id or str(uuid.uuid4()),
+        "message": message.strip(),
+        "kind": kind,  # "interval" | "daily"
+        "enabled": enabled,
+    }
+    if kind == "interval":
+        reminder["interval_minutes"] = int(interval_minutes or 30)
+    elif kind == "daily":
+        reminder["time"] = time_hhmm or "09:00"
+    else:
+        raise ValueError(f"Tipo de recordatorio no válido: {kind}")
+    return reminder
+
+
+def upsert_reminder(reminders: list[dict[str, Any]], reminder: dict[str, Any]) -> list[dict[str, Any]]:
+    updated = False
+    for idx, item in enumerate(reminders):
+        if item.get("id") == reminder.get("id"):
+            reminders[idx] = reminder
+            updated = True
+            break
+    if not updated:
+        reminders.append(reminder)
+    save_reminders(reminders)
+    return reminders
+
+
+def delete_reminder(reminders: list[dict[str, Any]], reminder_id: str) -> list[dict[str, Any]]:
+    reminders = [r for r in reminders if r.get("id") != reminder_id]
+    save_reminders(reminders)
+    return reminders
+
+
+def set_enabled(
+    reminders: list[dict[str, Any]], reminder_id: str, enabled: bool
+) -> list[dict[str, Any]]:
+    for item in reminders:
+        if item.get("id") == reminder_id:
+            item["enabled"] = enabled
+            break
+    save_reminders(reminders)
+    return reminders

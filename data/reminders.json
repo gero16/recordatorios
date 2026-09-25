@@ -1,0 +1,9 @@
+[
+  {
+    "id": "49aa60db-67d6-4a84-860c-19f63a515db1",
+    "message": "Cervezas Freezer - Desde 16:20",
+    "kind": "interval",
+    "enabled": true,
+    "interval_minutes": 25
+  }
+]
