@@ -1,4 +1,4 @@
-"""Programación de recordatorios por intervalo o a una hora fija."""
+"""Programación de recordatorios por intervalo, hora fija o días y horas."""
 
 from __future__ import annotations
 
@@ -8,6 +8,21 @@ from datetime import datetime, timedelta
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+
+def parse_hhmm(value: str) -> tuple[int, int]:
+    text = value.strip()
+    parts = text.split(":")
+    if not parts or not parts[0].strip():
+        raise ValueError(f"Hora inválida: {value}")
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1]) if len(parts) > 1 and parts[1].strip() else 0
+    except ValueError as exc:
+        raise ValueError(f"Hora inválida: {value}") from exc
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(f"Hora inválida: {value}")
+    return hour, minute
 
 
 class ReminderScheduler:
@@ -66,22 +81,52 @@ class ReminderScheduler:
             return after + timedelta(minutes=minutes)
         if kind == "daily":
             time_str = reminder.get("time") or "09:00"
-            hour, minute = self._parse_hhmm(time_str)
+            hour, minute = parse_hhmm(time_str)
             candidate = after.replace(hour=hour, minute=minute, second=0, microsecond=0)
             if candidate <= after:
                 candidate += timedelta(days=1)
             return candidate
+        if kind == "weekly":
+            return self._compute_next_weekly(reminder, after)
         # Desconocido: no disparar pronto
         return after + timedelta(days=3650)
 
+    def _compute_next_weekly(self, reminder: dict[str, Any], after: datetime) -> datetime:
+        days: set[int] = set()
+        for raw_day in reminder.get("days") or []:
+            try:
+                day = int(raw_day)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= day <= 6:
+                days.add(day)
+
+        slots: list[tuple[int, int]] = []
+        for raw_time in reminder.get("times") or []:
+            try:
+                slots.append(parse_hhmm(str(raw_time)))
+            except ValueError:
+                continue
+
+        if not days or not slots:
+            return after + timedelta(days=3650)
+
+        best: datetime | None = None
+        for offset in range(8):
+            day = after + timedelta(days=offset)
+            if day.weekday() not in days:
+                continue
+            for hour, minute in slots:
+                candidate = day.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if candidate <= after:
+                    continue
+                if best is None or candidate < best:
+                    best = candidate
+        return best if best is not None else after + timedelta(days=3650)
+
     @staticmethod
     def _parse_hhmm(value: str) -> tuple[int, int]:
-        parts = value.strip().split(":")
-        hour = int(parts[0])
-        minute = int(parts[1]) if len(parts) > 1 else 0
-        if not (0 <= hour <= 23 and 0 <= minute <= 59):
-            raise ValueError(f"Hora inválida: {value}")
-        return hour, minute
+        return parse_hhmm(value)
 
     def _loop(self) -> None:
         while not self._stop.is_set():

@@ -4,6 +4,7 @@ Aplicación de escritorio en Python para mostrar notificaciones en tu PC:
 
 - Cada cierto intervalo (por ejemplo, cada 30 minutos)
 - A una hora fija todos los días (por ejemplo, 15:00)
+- En ciertos días y a ciertas horas (por ejemplo, lunes, miércoles y viernes a las 09:00 y 18:30)
 
 Al cerrar o minimizar la ventana, el programa **sigue en segundo plano** (icono en la bandeja del sistema, junto al reloj). Las notificaciones se detienen solo cuando eliges **Salir** desde ese icono.
 
@@ -40,7 +41,7 @@ py main.py
 ```
 
 1. Escribe el mensaje del recordatorio.
-2. Elige **Cada cierto tiempo** o **A una hora**.
+2. Elige **Cada cierto tiempo**, **Todos los días a una hora** o **Ciertos días y horas**.
 3. Pulsa **Guardar recordatorio**.
 4. Puedes **Pausar**, **Activar** o **Eliminar** cada aviso.
 5. Usa **Probar notificación** para ver cómo se verá el toast.
