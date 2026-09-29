@@ -154,9 +154,12 @@ class ReminderScheduler:
 
             self._stop.wait(1.0)
 
-    def seconds_until_next(self, reminder_id: str) -> float | None:
+    def next_run_at(self, reminder_id: str) -> datetime | None:
         with self._lock:
-            next_at = self._next_run.get(reminder_id)
+            return self._next_run.get(reminder_id)
+
+    def seconds_until_next(self, reminder_id: str) -> float | None:
+        next_at = self.next_run_at(reminder_id)
         if next_at is None:
             return None
         return max(0.0, (next_at - datetime.now()).total_seconds())

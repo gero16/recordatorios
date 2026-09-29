@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 import tkinter as tk
+from datetime import datetime
 from tkinter import messagebox
 from typing import Any
 
@@ -41,6 +42,17 @@ ENTRY_HEIGHT = 42
 BTN_HEIGHT = 40
 CARD_BTN_HEIGHT = 34
 WEEKDAYS = ("Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom")
+WEEKDAY_LONG = (
+    "lunes",
+    "martes",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sábado",
+    "domingo",
+)
+NEXT_NOTICE_INTERVAL_MS = 15_000
+PAUSED_COLOR = "#64748B"
 
 
 def format_reminder_detail(reminder: dict[str, Any]) -> str:
@@ -73,6 +85,36 @@ def format_reminder_detail(reminder: dict[str, Any]) -> str:
     return f"Todos los días a las {reminder.get('time', '?')}"
 
 
+def format_next_notice(next_at: datetime | None, now: datetime) -> str:
+    """Texto del próximo aviso para un recordatorio activo."""
+    if next_at is None:
+        return "Próximo aviso: calculando…"
+    if next_at <= now:
+        return "Próximo aviso: en menos de 1 min"
+
+    seconds = (next_at - now).total_seconds()
+    if seconds < 45:
+        return "Próximo aviso: en menos de 1 min"
+
+    minutes = round(seconds / 60)
+    if minutes < 60:
+        return f"Próximo aviso: en {max(1, minutes)} min"
+
+    stamp = next_at.strftime("%H:%M")
+    day_delta = (next_at.date() - now.date()).days
+    if day_delta <= 0:
+        when = f"hoy a las {stamp}"
+    elif day_delta == 1:
+        when = f"mañana a las {stamp}"
+    elif day_delta < 7:
+        when = f"el {WEEKDAY_LONG[next_at.weekday()]} a las {stamp}"
+    elif next_at.year != now.year:
+        when = f"el {next_at.strftime('%d/%m/%Y')} a las {stamp}"
+    else:
+        when = f"el {next_at.strftime('%d/%m')} a las {stamp}"
+    return f"Próximo aviso: {when}"
+
+
 class App(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
@@ -89,18 +131,21 @@ class App(ctk.CTk):
         self._selected_days: set[int] = {0, 1, 2, 3, 4}
         self._times: list[str] = ["09:00"]
         self._day_buttons: list[ctk.CTkButton] = []
+        self._next_labels: dict[str, ctk.CTkLabel] = {}
+        self._next_notice_job: str | None = None
 
         self.scheduler = ReminderScheduler(on_fire=self._on_reminder_fire)
         self.tray = TrayIcon(on_show=self._show_from_tray, on_quit=self._quit_app)
         self._instance_guard: SingleInstanceGuard | None = None
 
         self._build_ui()
-        self._refresh_list()
 
         self.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
         self.bind("<Unmap>", self._on_unmap)
 
         self.scheduler.update_reminders(self.reminders)
+        self._refresh_list()
+        self._schedule_next_notice_refresh()
         self.scheduler.start()
         self.tray.start()
 
@@ -461,7 +506,38 @@ class App(ctk.CTk):
                 command=lambda value=stamp: self._remove_time(value),
             ).pack(side="right", padx=4, pady=4)
 
+    def _next_notice_for(self, reminder: dict[str, Any]) -> tuple[str, str]:
+        if not reminder.get("enabled", True):
+            return "Pausado", PAUSED_COLOR
+        reminder_id = reminder.get("id")
+        next_at = self.scheduler.next_run_at(str(reminder_id)) if reminder_id else None
+        return format_next_notice(next_at, datetime.now()), ACCENT
+
+    def _refresh_next_notices(self) -> None:
+        by_id = {str(item.get("id")): item for item in self.reminders}
+        for reminder_id, label in list(self._next_labels.items()):
+            reminder = by_id.get(reminder_id)
+            if reminder is None:
+                continue
+            text, color = self._next_notice_for(reminder)
+            try:
+                label.configure(text=text, text_color=color)
+            except tk.TclError:
+                continue
+
+    def _schedule_next_notice_refresh(self) -> None:
+        if self._quitting:
+            return
+        self._next_notice_job = self.after(NEXT_NOTICE_INTERVAL_MS, self._on_next_notice_tick)
+
+    def _on_next_notice_tick(self) -> None:
+        if self._quitting:
+            return
+        self._refresh_next_notices()
+        self._schedule_next_notice_refresh()
+
     def _refresh_list(self) -> None:
+        self._next_labels = {}
         for child in self.list_scroll.winfo_children():
             child.destroy()
 
@@ -481,9 +557,9 @@ class App(ctk.CTk):
 
             title = reminder.get("message") or "(sin mensaje)"
             detail = format_reminder_detail(reminder)
+            notice, notice_color = self._next_notice_for(reminder)
 
             enabled = bool(reminder.get("enabled", True))
-            status = "Activo" if enabled else "Pausado"
 
             ctk.CTkLabel(
                 card,
@@ -493,16 +569,29 @@ class App(ctk.CTk):
             ).grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 0))
             ctk.CTkLabel(
                 card,
-                text=f"{detail} · {status}",
+                text=detail,
                 text_color="#64748B",
                 font=ctk.CTkFont(size=FONT_CARD_META),
                 anchor="w",
                 justify="left",
                 wraplength=360,
-            ).grid(row=1, column=0, sticky="ew", padx=14, pady=(4, 10))
+            ).grid(row=1, column=0, sticky="ew", padx=14, pady=(4, 0))
+            notice_label = ctk.CTkLabel(
+                card,
+                text=notice,
+                text_color=notice_color,
+                font=ctk.CTkFont(size=FONT_CARD_META, weight="bold"),
+                anchor="w",
+                justify="left",
+                wraplength=360,
+            )
+            notice_label.grid(row=2, column=0, sticky="ew", padx=14, pady=(2, 10))
+            reminder_id = reminder.get("id")
+            if reminder_id:
+                self._next_labels[str(reminder_id)] = notice_label
 
             actions = ctk.CTkFrame(card, fg_color="transparent")
-            actions.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 12))
+            actions.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 12))
 
             ctk.CTkButton(
                 actions,
@@ -705,10 +794,11 @@ class App(ctk.CTk):
 
     def _on_reminder_fire(self, reminder: dict[str, Any]) -> None:
         message = reminder.get("message") or "Recordatorio"
-        self.after(
-            0,
-            lambda m=message: show_notification(APP_TITLE, m, parent=self),
-        )
+        self.after(0, lambda m=message: self._present_reminder(m))
+
+    def _present_reminder(self, message: str) -> None:
+        show_notification(APP_TITLE, message, parent=self)
+        self._refresh_next_notices()
 
     # ----- Ventana / bandeja -----
 
@@ -735,6 +825,12 @@ class App(ctk.CTk):
         if self._quitting:
             return
         self._quitting = True
+        if self._next_notice_job is not None:
+            try:
+                self.after_cancel(self._next_notice_job)
+            except tk.TclError:
+                pass
+            self._next_notice_job = None
         try:
             self.scheduler.stop()
         except Exception:  # noqa: BLE001

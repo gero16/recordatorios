@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 import customtkinter as ctk
@@ -10,7 +11,7 @@ import customtkinter as ctk
 logger = logging.getLogger(__name__)
 
 PANEL_WIDTH = 380
-CARD_HEIGHT = 100
+CARD_HEIGHT = 118
 CARD_GAP = 8
 PANEL_PAD = 10
 MARGIN_RIGHT = 20
@@ -129,6 +130,14 @@ class NotificationDock(ctk.CTkToplevel):
             justify="left",
             wraplength=PANEL_WIDTH - 60,
         ).pack(fill="x", pady=(8, 0), padx=(24, 0))
+
+        ctk.CTkLabel(
+            content,
+            text=datetime.now().strftime("%H:%M"),
+            text_color=MUTED,
+            font=ctk.CTkFont(size=11),
+            anchor="e",
+        ).pack(side="bottom", anchor="e")
 
         return card
 
