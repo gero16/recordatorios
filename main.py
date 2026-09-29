@@ -11,14 +11,17 @@ from typing import Any
 
 import customtkinter as ctk
 
-from notifier import show_notification
+from notifier import dismiss_notifications, show_notification
+from phone import load_phone_config, send_phone_notification, update_phone_settings
 from scheduler import ReminderScheduler, parse_hhmm
 from single_instance import SingleInstanceGuard
 from storage import (
     create_reminder,
     delete_reminder,
+    is_done_today,
     load_reminders,
     save_reminders,
+    set_done_today,
     set_enabled,
     upsert_reminder,
 )
@@ -53,6 +56,8 @@ WEEKDAY_LONG = (
 )
 NEXT_NOTICE_INTERVAL_MS = 15_000
 PAUSED_COLOR = "#64748B"
+DONE_COLOR = "#15803D"
+PENDING_COLOR = "#B45309"
 
 
 def format_reminder_detail(reminder: dict[str, Any]) -> str:
@@ -115,6 +120,27 @@ def format_next_notice(next_at: datetime | None, now: datetime) -> str:
     return f"Próximo aviso: {when}"
 
 
+def supports_done(reminder: dict[str, Any]) -> bool:
+    return reminder.get("kind") in ("daily", "weekly")
+
+
+def is_scheduled_today(reminder: dict[str, Any], now: datetime) -> bool:
+    """El aviso de hoy se puede marcar hecho si hoy es uno de sus días."""
+    kind = reminder.get("kind")
+    if kind == "daily":
+        return True
+    if kind != "weekly":
+        return False
+    for raw in reminder.get("days") or []:
+        try:
+            day = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if day == now.weekday():
+            return True
+    return False
+
+
 class App(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
@@ -122,8 +148,8 @@ class App(ctk.CTk):
         ctk.set_default_color_theme("blue")
 
         self.title(APP_TITLE)
-        self.geometry("980x860")
-        self.minsize(920, 760)
+        self.geometry("980x920")
+        self.minsize(920, 820)
 
         self.reminders: list[dict[str, Any]] = load_reminders()
         self._quitting = False
@@ -381,8 +407,48 @@ class App(ctk.CTk):
         self.list_scroll.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 16))
         self.list_scroll.grid_columnconfigure(0, weight=1)
 
+        phone_config = load_phone_config()
+        phone_bar = ctk.CTkFrame(self, fg_color="transparent")
+        phone_bar.grid(row=2, column=0, sticky="ew", padx=24, pady=(4, 0))
+        phone_bar.grid_columnconfigure(1, weight=1)
+
+        self.phone_enabled_var = tk.BooleanVar(value=bool(phone_config.get("enabled", True)))
+        ctk.CTkCheckBox(
+            phone_bar,
+            text="Avisar al celular",
+            variable=self.phone_enabled_var,
+            command=self._save_phone_settings,
+            font=ctk.CTkFont(size=FONT_BODY),
+        ).grid(row=0, column=0, sticky="w")
+        self.phone_topic_entry = ctk.CTkEntry(
+            phone_bar,
+            height=ENTRY_HEIGHT,
+            font=ctk.CTkFont(size=FONT_CARD_META),
+        )
+        self.phone_topic_entry.insert(0, str(phone_config.get("topic") or ""))
+        self.phone_topic_entry.grid(row=0, column=1, sticky="ew", padx=(12, 8))
+        self.phone_topic_entry.bind("<FocusOut>", lambda _event: self._save_phone_settings())
+        self.phone_topic_entry.bind("<Return>", lambda _event: self._save_phone_settings())
+        self.copy_topic_btn = ctk.CTkButton(
+            phone_bar,
+            text="Copiar tema",
+            width=130,
+            height=ENTRY_HEIGHT,
+            font=ctk.CTkFont(size=FONT_BUTTON),
+            fg_color="#334155",
+            hover_color="#1E293B",
+            command=self._copy_phone_topic,
+        )
+        self.copy_topic_btn.grid(row=0, column=2, sticky="e")
+        ctk.CTkLabel(
+            phone_bar,
+            text="En la app ntfy pulsa + y pega este tema. Quien lo conozca puede ver estos avisos.",
+            text_color="#64748B",
+            font=ctk.CTkFont(size=FONT_CARD_META),
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
         footer = ctk.CTkFrame(self, fg_color="transparent")
-        footer.grid(row=2, column=0, sticky="ew", padx=24, pady=(4, 20))
+        footer.grid(row=3, column=0, sticky="ew", padx=24, pady=(8, 20))
         ctk.CTkButton(
             footer,
             text="Probar notificación",
@@ -585,13 +651,35 @@ class App(ctk.CTk):
                 justify="left",
                 wraplength=360,
             )
-            notice_label.grid(row=2, column=0, sticky="ew", padx=14, pady=(2, 10))
+            notice_label.grid(row=2, column=0, sticky="ew", padx=14, pady=(2, 6))
             reminder_id = reminder.get("id")
             if reminder_id:
                 self._next_labels[str(reminder_id)] = notice_label
 
+            action_row = 3
+            if (
+                reminder_id
+                and supports_done(reminder)
+                and is_scheduled_today(reminder, datetime.now())
+            ):
+                done_now = is_done_today(reminder)
+                done_var = tk.BooleanVar(value=done_now)
+                ctk.CTkCheckBox(
+                    card,
+                    text="Hecho hoy" if done_now else "Pendiente hoy",
+                    variable=done_var,
+                    command=lambda rid=str(reminder_id), var=done_var: self._on_done_checkbox(
+                        rid, var
+                    ),
+                    font=ctk.CTkFont(size=FONT_CARD_META, weight="bold"),
+                    text_color=DONE_COLOR if done_now else PENDING_COLOR,
+                    fg_color=DONE_COLOR,
+                    hover_color="#166534",
+                ).grid(row=3, column=0, sticky="w", padx=14, pady=(0, 6))
+                action_row = 4
+
             actions = ctk.CTkFrame(card, fg_color="transparent")
-            actions.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 12))
+            actions.grid(row=action_row, column=0, sticky="ew", padx=10, pady=(0, 12))
 
             ctk.CTkButton(
                 actions,
@@ -762,6 +850,11 @@ class App(ctk.CTk):
             messagebox.showerror(APP_TITLE, str(exc))
             return
 
+        if existing and kind in ("daily", "weekly"):
+            done_on = existing.get("done_on")
+            if isinstance(done_on, str) and done_on:
+                reminder["done_on"] = done_on
+
         was_editing = self._editing_id
         self.reminders = upsert_reminder(self.reminders, reminder)
         reset = {was_editing} if was_editing else None
@@ -779,6 +872,17 @@ class App(ctk.CTk):
         self.scheduler.update_reminders(self.reminders)
         self._refresh_list()
 
+    def _on_done_checkbox(self, reminder_id: str, variable: tk.BooleanVar) -> None:
+        done = bool(variable.get())
+        self.after(0, lambda rid=reminder_id, flag=done: self._mark_done(rid, flag))
+
+    def _mark_done(self, reminder_id: str, done: bool) -> None:
+        self.reminders = set_done_today(self.reminders, reminder_id, done)
+        self.scheduler.update_reminders(self.reminders, reset_ids={reminder_id})
+        if done:
+            dismiss_notifications(reminder_id)
+        self._refresh_list()
+
     def _delete_reminder(self, reminder_id: str) -> None:
         if not messagebox.askyesno(APP_TITLE, "¿Eliminar este recordatorio?"):
             return
@@ -788,16 +892,72 @@ class App(ctk.CTk):
         self.scheduler.update_reminders(self.reminders)
         self._refresh_list()
 
+    def _save_phone_settings(self) -> None:
+        topic = self.phone_topic_entry.get()
+        try:
+            update_phone_settings(self.phone_enabled_var.get(), topic)
+        except ValueError as exc:
+            messagebox.showwarning(APP_TITLE, str(exc))
+
+    def _copy_phone_topic(self) -> None:
+        self._save_phone_settings()
+        topic = self.phone_topic_entry.get().strip()
+        self.clipboard_clear()
+        self.clipboard_append(topic)
+        self.copy_topic_btn.configure(text="Copiado")
+        self.after(1500, lambda: self.copy_topic_btn.configure(text="Copiar tema"))
+
     def _test_notification(self) -> None:
         # Misma ruta visual que los recordatorios reales
-        show_notification(APP_TITLE, "Así se verán tus recordatorios.", parent=self)
+        message = "Así se verán tus recordatorios."
+        show_notification(APP_TITLE, message, parent=self)
+        send_phone_notification(
+            APP_TITLE,
+            message,
+            on_done=lambda ok, detail: self.after(
+                0, lambda ok=ok, detail=detail: self._on_phone_test_done(ok, detail)
+            ),
+        )
+
+    def _on_phone_test_done(self, ok: bool, detail: str) -> None:
+        if ok:
+            messagebox.showinfo(
+                APP_TITLE,
+                "Aviso enviado al celular. Si no llega, en ntfy suscríbete al tema con «Copiar tema».",
+            )
+            return
+        if detail == "off":
+            messagebox.showwarning(
+                APP_TITLE,
+                "El aviso al celular está desactivado. Marca «Avisar al celular».",
+            )
+            return
+        if detail == "topic":
+            messagebox.showwarning(APP_TITLE, "El tema de ntfy no es válido.")
+            return
+        messagebox.showwarning(
+            APP_TITLE,
+            "No se pudo enviar al celular. Revisa tu conexión a internet.",
+        )
 
     def _on_reminder_fire(self, reminder: dict[str, Any]) -> None:
-        message = reminder.get("message") or "Recordatorio"
-        self.after(0, lambda m=message: self._present_reminder(m))
+        snapshot = dict(reminder)
+        self.after(0, lambda item=snapshot: self._present_reminder(item))
 
-    def _present_reminder(self, message: str) -> None:
-        show_notification(APP_TITLE, message, parent=self)
+    def _present_reminder(self, reminder: dict[str, Any]) -> None:
+        message = reminder.get("message") or "Recordatorio"
+        reminder_id = str(reminder.get("id") or "")
+        on_done = None
+        if supports_done(reminder) and reminder_id:
+            on_done = lambda rid=reminder_id: self._mark_done(rid, True)
+        show_notification(
+            APP_TITLE,
+            message,
+            parent=self,
+            on_done=on_done,
+            reminder_id=reminder_id or None,
+        )
+        send_phone_notification(APP_TITLE, message)
         self._refresh_next_notices()
 
     # ----- Ventana / bandeja -----

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -120,5 +121,29 @@ def set_enabled(
         if item.get("id") == reminder_id:
             item["enabled"] = enabled
             break
+    save_reminders(reminders)
+    return reminders
+
+
+def is_done_today(reminder: dict[str, Any], today: str | None = None) -> bool:
+    stamp = today or datetime.now().strftime("%Y-%m-%d")
+    return reminder.get("done_on") == stamp
+
+
+def set_done_today(
+    reminders: list[dict[str, Any]], reminder_id: str, done: bool, *, today: str | None = None
+) -> list[dict[str, Any]]:
+    """Marca o quita el hecho de hoy. Solo aplica a avisos diarios o de días concretos."""
+    stamp = today or datetime.now().strftime("%Y-%m-%d")
+    for item in reminders:
+        if item.get("id") != reminder_id:
+            continue
+        if item.get("kind") not in ("daily", "weekly"):
+            break
+        if done:
+            item["done_on"] = stamp
+        elif item.get("done_on") == stamp:
+            item.pop("done_on", None)
+        break
     save_reminders(reminders)
     return reminders

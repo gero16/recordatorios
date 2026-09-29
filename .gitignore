@@ -9,3 +9,4 @@ build/
 .idea/
 .vscode/
 *.log
+data/phone.json

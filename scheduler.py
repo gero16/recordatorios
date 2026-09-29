@@ -10,6 +10,12 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 
+def is_done_on(reminder: dict[str, Any], moment: datetime) -> bool:
+    """True si el recordatorio ya se marcó hecho en el día de ``moment``."""
+    done_on = reminder.get("done_on")
+    return isinstance(done_on, str) and done_on == moment.strftime("%Y-%m-%d")
+
+
 def parse_hhmm(value: str) -> tuple[int, int]:
     text = value.strip()
     parts = text.split(":")
@@ -85,6 +91,9 @@ class ReminderScheduler:
             candidate = after.replace(hour=hour, minute=minute, second=0, microsecond=0)
             if candidate <= after:
                 candidate += timedelta(days=1)
+            # Hecho hoy: no volver a avisar en lo que queda del día.
+            if is_done_on(reminder, after) and candidate.date() == after.date():
+                candidate += timedelta(days=1)
             return candidate
         if kind == "weekly":
             return self._compute_next_weekly(reminder, after)
@@ -111,9 +120,12 @@ class ReminderScheduler:
         if not days or not slots:
             return after + timedelta(days=3650)
 
+        skip_date = after.date() if is_done_on(reminder, after) else None
         best: datetime | None = None
         for offset in range(8):
             day = after + timedelta(days=offset)
+            if skip_date is not None and day.date() == skip_date:
+                continue
             if day.weekday() not in days:
                 continue
             for hour, minute in slots:
@@ -142,6 +154,9 @@ class ReminderScheduler:
                         self._next_run[rid] = self._compute_next(reminder, now)
                         continue
                     if next_at <= now:
+                        if is_done_on(reminder, now) and reminder.get("kind") in ("daily", "weekly"):
+                            self._next_run[rid] = self._compute_next(reminder, now)
+                            continue
                         due.append(dict(reminder))
                         # Programar la siguiente inmediatamente después de disparar
                         self._next_run[rid] = self._compute_next(reminder, now)
