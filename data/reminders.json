@@ -1,10 +1,9 @@
 [
   {
-    "id": "232a7556-6e6a-4f20-a284-84199d2fd699",
-    "message": "Entrar Cartel",
-    "kind": "daily",
+    "id": "031e6791-4b55-437f-a278-895f279359d6",
+    "message": "Agua Fideos 21:19",
+    "kind": "interval",
     "enabled": true,
-    "time": "17:53",
-    "done_on": "2026-09-29"
+    "interval_minutes": 5
   }
 ]
