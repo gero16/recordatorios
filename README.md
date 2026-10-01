@@ -24,7 +24,10 @@ El instalador hace tres cosas: instala las dependencias, genera el icono (`icono
 
 **Importante:** el acceso directo apunta a la carpeta donde está el proyecto. Si mueves o renombras la carpeta, vuelve a ejecutar `instalar.bat`.
 
-**Abrir al iniciar Windows (opcional):** pulsa `Win + R`, escribe `shell:startup` y copia ahí el acceso directo del escritorio.
+**Siempre activo o solo cuando lo abras:** en la parte inferior de la ventana está la casilla **Iniciar con Windows (siempre activo en la bandeja)**.
+
+- **Marcada:** el programa arranca solo al encender la PC y queda en la bandeja del sistema, sin abrir la ventana. Así los recordatorios siempre suenan.
+- **Desmarcada:** el programa solo funciona cuando alguien lo abre desde el icono del escritorio.
 
 ## Instalación manual
 
@@ -68,6 +71,7 @@ py main.py
 | `scheduler.py` | Temporizadores |
 | `notifier.py` | Toasts de Windows |
 | `tray.py` | Icono de bandeja |
+| `autostart.py` | Inicio automático con Windows |
 | `storage.py` | Guardado en JSON |
 | `data/reminders.json` | Tus recordatorios |
 | `instalar.bat` | Instala dependencias y crea el icono en el escritorio |
