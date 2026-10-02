@@ -13,7 +13,7 @@ import customtkinter as ctk
 
 from notifier import dismiss_notifications, show_notification
 from phone import load_phone_config, send_phone_notification, update_phone_settings
-from scheduler import ReminderScheduler, parse_hhmm
+from scheduler import ReminderScheduler, parse_hhmm, weekly_schedule
 from single_instance import SingleInstanceGuard
 from storage import (
     create_reminder,
@@ -60,33 +60,30 @@ DONE_COLOR = "#15803D"
 PENDING_COLOR = "#B45309"
 
 
-def format_reminder_detail(reminder: dict[str, Any]) -> str:
-    kind = reminder.get("kind")
-    if kind == "interval":
-        return f"Cada {reminder.get('interval_minutes', '?')} min"
-    if kind == "weekly":
-        days = []
-        for raw in reminder.get("days") or []:
-            try:
-                day = int(raw)
-            except (TypeError, ValueError):
-                continue
-            if 0 <= day <= 6 and day not in days:
-                days.append(day)
-        days.sort()
-        times = reminder.get("times") or []
+def format_weekly_schedule(schedule: dict[int, list[str]]) -> str:
+    if not schedule:
+        return "Sin días"
+    days = sorted(schedule)
+    shared = next(iter(schedule.values()))
+    if all(schedule[day] == shared for day in days):
         if days == list(range(7)):
             day_text = "Todos los días"
         elif days == [0, 1, 2, 3, 4]:
             day_text = "Lunes a viernes"
         elif days == [5, 6]:
             day_text = "Sábado y domingo"
-        elif days:
-            day_text = ", ".join(WEEKDAYS[day] for day in days)
         else:
-            day_text = "Sin días"
-        time_text = ", ".join(str(item) for item in times) if times else "sin hora"
-        return f"{day_text} · {time_text}"
+            day_text = ", ".join(WEEKDAYS[day] for day in days)
+        return f"{day_text} · {', '.join(shared)}"
+    return " · ".join(f"{WEEKDAYS[day]} {', '.join(schedule[day])}" for day in days)
+
+
+def format_reminder_detail(reminder: dict[str, Any]) -> str:
+    kind = reminder.get("kind")
+    if kind == "interval":
+        return f"Cada {reminder.get('interval_minutes', '?')} min"
+    if kind == "weekly":
+        return format_weekly_schedule(weekly_schedule(reminder))
     return f"Todos los días a las {reminder.get('time', '?')}"
 
 
@@ -131,14 +128,7 @@ def is_scheduled_today(reminder: dict[str, Any], now: datetime) -> bool:
         return True
     if kind != "weekly":
         return False
-    for raw in reminder.get("days") or []:
-        try:
-            day = int(raw)
-        except (TypeError, ValueError):
-            continue
-        if day == now.weekday():
-            return True
-    return False
+    return now.weekday() in weekly_schedule(reminder)
 
 
 class App(ctk.CTk):
@@ -148,14 +138,14 @@ class App(ctk.CTk):
         ctk.set_default_color_theme("blue")
 
         self.title(APP_TITLE)
-        self.geometry("980x920")
-        self.minsize(920, 820)
+        self.geometry("1000x980")
+        self.minsize(940, 900)
 
         self.reminders: list[dict[str, Any]] = load_reminders()
         self._quitting = False
         self._editing_id: str | None = None
-        self._selected_days: set[int] = {0, 1, 2, 3, 4}
-        self._times: list[str] = ["09:00"]
+        self._schedule: dict[int, list[str]] = {day: ["09:00"] for day in range(5)}
+        self._active_day = 0
         self._day_buttons: list[ctk.CTkButton] = []
         self._next_labels: dict[str, ctk.CTkLabel] = {}
         self._next_notice_job: str | None = None
@@ -283,22 +273,16 @@ class App(ctk.CTk):
 
         ctk.CTkLabel(
             self.weekly_frame,
-            text="Suena en los días marcados, a cada hora de la lista.",
+            text="Elige un día y agrega sus horas. Cada día puede tener un horario distinto.",
             text_color="#64748B",
             font=ctk.CTkFont(size=FONT_CARD_META),
-            wraplength=320,
+            wraplength=420,
             justify="left",
             anchor="w",
         ).grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
-        ctk.CTkLabel(
-            self.weekly_frame,
-            text="Días",
-            font=ctk.CTkFont(size=FONT_LABEL, weight="bold"),
-        ).grid(row=1, column=0, sticky="w")
-
         days_row = ctk.CTkFrame(self.weekly_frame, fg_color="transparent")
-        days_row.grid(row=2, column=0, sticky="ew", pady=(6, 4))
+        days_row.grid(row=1, column=0, sticky="ew", pady=(0, 4))
         for index in range(7):
             days_row.grid_columnconfigure(index, weight=1)
             button = ctk.CTkButton(
@@ -307,13 +291,13 @@ class App(ctk.CTk):
                 width=52,
                 height=34,
                 font=ctk.CTkFont(size=13, weight="bold"),
-                command=lambda day=index: self._toggle_day(day),
+                command=lambda day=index: self._select_day(day),
             )
             button.grid(row=0, column=index, padx=2, sticky="ew")
             self._day_buttons.append(button)
 
         presets = ctk.CTkFrame(self.weekly_frame, fg_color="transparent")
-        presets.grid(row=3, column=0, sticky="w", pady=(2, 10))
+        presets.grid(row=2, column=0, sticky="w", pady=(2, 2))
         for label, days in (
             ("Lu a Vi", {0, 1, 2, 3, 4}),
             ("Fin de semana", {5, 6}),
@@ -327,14 +311,24 @@ class App(ctk.CTk):
                 fg_color="#E2E8F0",
                 hover_color="#CBD5E1",
                 text_color="#334155",
-                command=lambda selected=days: self._set_days(selected),
+                command=lambda selected=days: self._apply_day_preset(selected),
             ).pack(side="left", padx=(0, 6))
 
         ctk.CTkLabel(
             self.weekly_frame,
-            text="Horas",
+            text="Los atajos copian las horas del día elegido.",
+            text_color="#64748B",
+            font=ctk.CTkFont(size=13),
+            anchor="w",
+        ).grid(row=3, column=0, sticky="w", pady=(0, 8))
+
+        self.weekly_hours_label = ctk.CTkLabel(
+            self.weekly_frame,
+            text="Horas del lunes",
             font=ctk.CTkFont(size=FONT_LABEL, weight="bold"),
-        ).grid(row=4, column=0, sticky="w", pady=(4, 0))
+            anchor="w",
+        )
+        self.weekly_hours_label.grid(row=4, column=0, sticky="w", pady=(4, 0))
 
         add_row = ctk.CTkFrame(self.weekly_frame, fg_color="transparent")
         add_row.grid(row=5, column=0, sticky="ew", pady=(6, 4))
@@ -359,10 +353,32 @@ class App(ctk.CTk):
         ).grid(row=0, column=1)
 
         self.times_chips = ctk.CTkFrame(self.weekly_frame, fg_color="transparent")
-        self.times_chips.grid(row=6, column=0, sticky="ew", pady=(4, 8))
+        self.times_chips.grid(row=6, column=0, sticky="ew", pady=(4, 4))
         self.times_chips.grid_columnconfigure((0, 1), weight=1)
-        self._refresh_day_buttons()
-        self._refresh_time_chips()
+
+        self.clear_day_btn = ctk.CTkButton(
+            self.weekly_frame,
+            text="Quitar este día",
+            height=30,
+            font=ctk.CTkFont(size=13),
+            fg_color="#E2E8F0",
+            hover_color="#CBD5E1",
+            text_color="#334155",
+            command=self._clear_active_day,
+        )
+        self.clear_day_btn.grid(row=7, column=0, sticky="w", pady=(2, 6))
+
+        self.schedule_summary = ctk.CTkLabel(
+            self.weekly_frame,
+            text="",
+            text_color="#334155",
+            font=ctk.CTkFont(size=FONT_CARD_META),
+            wraplength=420,
+            justify="left",
+            anchor="w",
+        )
+        self.schedule_summary.grid(row=8, column=0, sticky="ew", pady=(0, 4))
+        self._refresh_schedule()
 
         form_actions = ctk.CTkFrame(form, fg_color="transparent")
         form_actions.grid(row=8, column=0, sticky="ew", padx=16, pady=(12, 18))
@@ -485,23 +501,32 @@ class App(ctk.CTk):
             self.time_frame.grid()
             self.weekly_frame.grid_remove()
 
-    def _toggle_day(self, day: int) -> None:
-        if day in self._selected_days:
-            self._selected_days.remove(day)
-        else:
-            self._selected_days.add(day)
-        self._refresh_day_buttons()
+    def _select_day(self, day: int) -> None:
+        self._active_day = day
+        self._refresh_schedule()
 
-    def _set_days(self, days: set[int]) -> None:
-        self._selected_days = set(days)
-        self._refresh_day_buttons()
+    def _apply_day_preset(self, days: set[int]) -> None:
+        times = list(self._schedule.get(self._active_day) or ["09:00"])
+        self._schedule = {day: list(times) for day in sorted(days)}
+        if self._active_day not in days:
+            self._active_day = min(days)
+        self._refresh_schedule()
 
-    def _refresh_day_buttons(self) -> None:
+    def _refresh_schedule(self) -> None:
+        active = self._active_day
         for day, button in enumerate(self._day_buttons):
-            if day in self._selected_days:
+            if day == active:
+                button.configure(fg_color="#1E40AF", hover_color="#1E3A8A", text_color="white")
+            elif day in self._schedule:
                 button.configure(fg_color=ACCENT, hover_color="#1D4ED8", text_color="white")
             else:
                 button.configure(fg_color="#E2E8F0", hover_color="#CBD5E1", text_color="#334155")
+        self.weekly_hours_label.configure(text=f"Horas del {WEEKDAY_LONG[active]}")
+        self._refresh_time_chips()
+        if self._schedule:
+            self.schedule_summary.configure(text=format_weekly_schedule(self._schedule))
+        else:
+            self.schedule_summary.configure(text="Ningún día tiene horas todavía.")
 
     def _add_time_clicked(self) -> bool:
         return self._add_times_from_text(self.weekly_time_entry.get())
@@ -527,33 +552,47 @@ class App(ctk.CTk):
             if stamp not in normalized:
                 normalized.append(stamp)
 
+        current = list(self._schedule.get(self._active_day, []))
         for stamp in normalized:
-            if stamp not in self._times:
-                self._times.append(stamp)
-        self._times.sort()
+            if stamp not in current:
+                current.append(stamp)
+        current.sort()
+        self._schedule[self._active_day] = current
         self.weekly_time_entry.delete(0, "end")
-        self._refresh_time_chips()
+        self._refresh_schedule()
         return True
 
     def _remove_time(self, value: str) -> None:
-        self._times = [item for item in self._times if item != value]
-        self._refresh_time_chips()
+        current = [item for item in self._schedule.get(self._active_day, []) if item != value]
+        if current:
+            self._schedule[self._active_day] = current
+        else:
+            self._schedule.pop(self._active_day, None)
+        self._refresh_schedule()
+
+    def _clear_active_day(self) -> None:
+        if self._active_day not in self._schedule:
+            messagebox.showwarning(APP_TITLE, "Este día no tiene horas.")
+            return
+        self._schedule.pop(self._active_day, None)
+        self._refresh_schedule()
 
     def _refresh_time_chips(self) -> None:
         for child in self.times_chips.winfo_children():
             child.destroy()
 
-        if not self._times:
+        times = self._schedule.get(self._active_day, [])
+        if not times:
             ctk.CTkLabel(
                 self.times_chips,
-                text="Agrega al menos una hora.",
+                text="Este día todavía no tiene horas.",
                 text_color="#64748B",
                 font=ctk.CTkFont(size=FONT_CARD_META),
                 anchor="w",
             ).grid(row=0, column=0, columnspan=2, sticky="w", pady=4)
             return
 
-        for index, stamp in enumerate(self._times):
+        for index, stamp in enumerate(times):
             chip = ctk.CTkFrame(self.times_chips, fg_color="#E8EEF5", corner_radius=8)
             chip.grid(row=index // 2, column=index % 2, sticky="ew", padx=3, pady=3)
             ctk.CTkLabel(
@@ -730,13 +769,15 @@ class App(ctk.CTk):
         self.interval_entry.delete(0, "end")
         self.time_entry.delete(0, "end")
         self.weekly_time_entry.delete(0, "end")
-        self._selected_days = {0, 1, 2, 3, 4}
-        self._times = ["09:00"] if defaults else []
+        if defaults:
+            self._schedule = {day: ["09:00"] for day in range(5)}
+        else:
+            self._schedule = {}
+        self._active_day = 0
         if defaults:
             self.interval_entry.insert(0, "30")
             self.time_entry.insert(0, "15:00")
-        self._refresh_day_buttons()
-        self._refresh_time_chips()
+        self._refresh_schedule()
         self._sync_kind_fields()
 
     def _start_edit(self, reminder_id: str) -> None:
@@ -759,32 +800,13 @@ class App(ctk.CTk):
         self.time_entry.insert(0, reminder.get("time") or "15:00")
 
         if kind == "weekly":
-            selected: set[int] = set()
-            for raw in reminder.get("days") or []:
-                try:
-                    day = int(raw)
-                except (TypeError, ValueError):
-                    continue
-                if 0 <= day <= 6:
-                    selected.add(day)
-            self._selected_days = selected
-            loaded_times: list[str] = []
-            for value in reminder.get("times") or []:
-                try:
-                    hour, minute = parse_hhmm(str(value))
-                except ValueError:
-                    continue
-                stamp = f"{hour:02d}:{minute:02d}"
-                if stamp not in loaded_times:
-                    loaded_times.append(stamp)
-            loaded_times.sort()
-            self._times = loaded_times
+            self._schedule = weekly_schedule(reminder)
+            self._active_day = min(self._schedule) if self._schedule else 0
         else:
-            self._selected_days = {0, 1, 2, 3, 4}
-            self._times = ["09:00"]
+            self._schedule = {day: ["09:00"] for day in range(5)}
+            self._active_day = 0
 
-        self._refresh_day_buttons()
-        self._refresh_time_chips()
+        self._refresh_schedule()
         self._sync_kind_fields()
         self._set_form_mode(True)
         self.message_entry.focus_set()
@@ -830,8 +852,7 @@ class App(ctk.CTk):
                 reminder = create_reminder(
                     message,
                     "weekly",
-                    days=sorted(self._selected_days),
-                    times=list(self._times),
+                    schedule=dict(self._schedule),
                     enabled=enabled,
                     reminder_id=self._editing_id,
                 )

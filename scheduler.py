@@ -10,6 +10,56 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 
+def weekly_schedule(reminder: dict[str, Any]) -> dict[int, list[str]]:
+    """Día 0=lunes … 6=domingo, con sus horas. Cada día puede tener horarios distintos."""
+    raw = reminder.get("schedule")
+    parsed: dict[int, list[str]] = {}
+    if isinstance(raw, dict) and raw:
+        for raw_day, raw_times in raw.items():
+            try:
+                day = int(raw_day)
+            except (TypeError, ValueError):
+                continue
+            if not 0 <= day <= 6 or not isinstance(raw_times, list):
+                continue
+            stamps: list[str] = []
+            for value in raw_times:
+                try:
+                    hour, minute = parse_hhmm(str(value))
+                except ValueError:
+                    continue
+                stamp = f"{hour:02d}:{minute:02d}"
+                if stamp not in stamps:
+                    stamps.append(stamp)
+            if stamps:
+                stamps.sort()
+                parsed[day] = stamps
+        if parsed:
+            return parsed
+
+    days: list[int] = []
+    for raw_day in reminder.get("days") or []:
+        try:
+            day = int(raw_day)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= day <= 6 and day not in days:
+            days.append(day)
+    stamps: list[str] = []
+    for value in reminder.get("times") or []:
+        try:
+            hour, minute = parse_hhmm(str(value))
+        except ValueError:
+            continue
+        stamp = f"{hour:02d}:{minute:02d}"
+        if stamp not in stamps:
+            stamps.append(stamp)
+    stamps.sort()
+    if not days or not stamps:
+        return {}
+    return {day: list(stamps) for day in days}
+
+
 def is_done_on(reminder: dict[str, Any], moment: datetime) -> bool:
     """True si el recordatorio ya se marcó hecho en el día de ``moment``."""
     done_on = reminder.get("done_on")
@@ -101,23 +151,8 @@ class ReminderScheduler:
         return after + timedelta(days=3650)
 
     def _compute_next_weekly(self, reminder: dict[str, Any], after: datetime) -> datetime:
-        days: set[int] = set()
-        for raw_day in reminder.get("days") or []:
-            try:
-                day = int(raw_day)
-            except (TypeError, ValueError):
-                continue
-            if 0 <= day <= 6:
-                days.add(day)
-
-        slots: list[tuple[int, int]] = []
-        for raw_time in reminder.get("times") or []:
-            try:
-                slots.append(parse_hhmm(str(raw_time)))
-            except ValueError:
-                continue
-
-        if not days or not slots:
+        schedule = weekly_schedule(reminder)
+        if not schedule:
             return after + timedelta(days=3650)
 
         skip_date = after.date() if is_done_on(reminder, after) else None
@@ -126,9 +161,14 @@ class ReminderScheduler:
             day = after + timedelta(days=offset)
             if skip_date is not None and day.date() == skip_date:
                 continue
-            if day.weekday() not in days:
+            slots = schedule.get(day.weekday())
+            if not slots:
                 continue
-            for hour, minute in slots:
+            for stamp in slots:
+                try:
+                    hour, minute = parse_hhmm(stamp)
+                except ValueError:
+                    continue
                 candidate = day.replace(hour=hour, minute=minute, second=0, microsecond=0)
                 if candidate <= after:
                     continue

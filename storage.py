@@ -64,6 +64,24 @@ def _normalize_times(times: list[str] | None) -> list[str]:
     return normalized
 
 
+def _normalize_schedule(schedule: dict[int, list[str]] | None) -> dict[str, list[str]]:
+    if not schedule:
+        raise ValueError("Elige al menos un día y una hora.")
+    normalized: dict[str, list[str]] = {}
+    for raw_day, raw_times in schedule.items():
+        try:
+            day = int(raw_day)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Hay un día que no es válido.") from exc
+        if day < 0 or day > 6:
+            raise ValueError("Hay un día que no es válido.")
+        times = _normalize_times(list(raw_times) if raw_times else None)
+        normalized[str(day)] = times
+    if not normalized:
+        raise ValueError("Elige al menos un día y una hora.")
+    return dict(sorted(normalized.items(), key=lambda item: int(item[0])))
+
+
 def create_reminder(
     message: str,
     kind: str,
@@ -72,6 +90,7 @@ def create_reminder(
     time_hhmm: str | None = None,
     days: list[int] | None = None,
     times: list[str] | None = None,
+    schedule: dict[int, list[str]] | None = None,
     enabled: bool = True,
     reminder_id: str | None = None,
 ) -> dict[str, Any]:
@@ -87,9 +106,12 @@ def create_reminder(
         hour, minute = parse_hhmm(time_hhmm or "09:00")
         reminder["time"] = f"{hour:02d}:{minute:02d}"
     elif kind == "weekly":
-        # days: 0 = lunes … 6 = domingo. times: varias horas en esos días.
-        reminder["days"] = _normalize_days(days)
-        reminder["times"] = _normalize_times(times)
+        # schedule: día 0=lunes … 6=domingo, cada uno con sus horas.
+        if schedule is not None:
+            reminder["schedule"] = _normalize_schedule(schedule)
+        else:
+            shared = _normalize_times(times)
+            reminder["schedule"] = {str(day): list(shared) for day in _normalize_days(days)}
     else:
         raise ValueError(f"Tipo de recordatorio no válido: {kind}")
     return reminder
