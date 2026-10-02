@@ -11,6 +11,7 @@ from typing import Any
 
 import customtkinter as ctk
 
+import autostart
 from notifier import dismiss_notifications, show_notification
 from phone import load_phone_config, send_phone_notification, update_phone_settings
 from scheduler import ReminderScheduler, parse_hhmm, weekly_schedule
@@ -132,8 +133,10 @@ def is_scheduled_today(reminder: dict[str, Any], now: datetime) -> bool:
 
 
 class App(ctk.CTk):
-    def __init__(self) -> None:
+    def __init__(self, *, start_hidden: bool = False) -> None:
         super().__init__()
+        if start_hidden:
+            self.withdraw()
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
 
@@ -485,6 +488,26 @@ class App(ctk.CTk):
             hover_color="#334155",
             command=self._hide_to_tray,
         ).pack(side="left", padx=(12, 0))
+
+        self.autostart_var = tk.BooleanVar(value=autostart.is_enabled())
+        ctk.CTkCheckBox(
+            footer,
+            text="Iniciar con Windows (siempre activo en la bandeja)",
+            variable=self.autostart_var,
+            command=self._toggle_autostart,
+            font=ctk.CTkFont(size=FONT_BODY),
+        ).pack(side="right")
+
+    def _toggle_autostart(self) -> None:
+        wanted = bool(self.autostart_var.get())
+        try:
+            if wanted:
+                autostart.enable()
+            else:
+                autostart.disable()
+        except OSError as exc:
+            self.autostart_var.set(not wanted)
+            messagebox.showerror(APP_TITLE, f"No se pudo cambiar el inicio con Windows: {exc}")
 
     def _sync_kind_fields(self) -> None:
         kind = self.kind_var.get()
@@ -1035,7 +1058,8 @@ def main() -> int:
         # Ya hay una instancia: se le pidió que muestre la ventana
         return 0
 
-    app = App()
+    autostart.refresh()
+    app = App(start_hidden=autostart.started_by_autostart())
     app._instance_guard = guard
     guard.start_listener(on_show=app._show_from_tray)
     try:

@@ -1,1 +1,9 @@
-[]
+[
+  {
+    "id": "031e6791-4b55-437f-a278-895f279359d6",
+    "message": "Agua Fideos 21:19 - 21:28 fideos",
+    "kind": "interval",
+    "enabled": false,
+    "interval_minutes": 5
+  }
+]

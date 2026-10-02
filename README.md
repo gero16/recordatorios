@@ -13,7 +13,23 @@ Al cerrar o minimizar la ventana, el programa **sigue en segundo plano** (icono 
 - Windows 10 u 11
 - Python 3.10 o superior
 
-## Instalación
+## Instalación rápida (con icono en el escritorio)
+
+1. Instala [Python 3.10 o superior](https://www.python.org/downloads/). Durante la instalación marca la casilla **"Add python.exe to PATH"**.
+2. Descarga el proyecto: en GitHub, pulsa **Code → Download ZIP** y descomprímelo en una carpeta fija (por ejemplo `Documentos\recordatorios`). También puedes usar `git clone https://github.com/gero16/recordatorios.git`.
+3. Entra en la carpeta y haz doble clic en **`instalar.bat`**.
+4. Cuando termine, tendrás el icono **Recordatorios** en el escritorio. Haz doble clic en él para abrir el programa.
+
+El instalador hace tres cosas: instala las dependencias, genera el icono (`icono.ico`) y crea el acceso directo en el escritorio.
+
+**Importante:** el acceso directo apunta a la carpeta donde está el proyecto. Si mueves o renombras la carpeta, vuelve a ejecutar `instalar.bat`.
+
+**Siempre activo o solo cuando lo abras:** en la parte inferior de la ventana está la casilla **Iniciar con Windows (siempre activo en la bandeja)**.
+
+- **Marcada:** el programa arranca solo al encender la PC y queda en la bandeja del sistema, sin abrir la ventana. Así los recordatorios siempre suenan.
+- **Desmarcada:** el programa solo funciona cuando alguien lo abre desde el icono del escritorio.
+
+## Instalación manual
 
 1. Abre una terminal en esta carpeta.
 2. Instala las dependencias:
@@ -55,8 +71,11 @@ py main.py
 | `scheduler.py` | Temporizadores |
 | `notifier.py` | Toasts de Windows |
 | `tray.py` | Icono de bandeja |
+| `autostart.py` | Inicio automático con Windows |
 | `storage.py` | Guardado en JSON |
 | `data/reminders.json` | Tus recordatorios |
+| `instalar.bat` | Instala dependencias y crea el icono en el escritorio |
+| `iniciar.bat` | Abre el programa sin crear acceso directo |
 
 ## Nota
 
